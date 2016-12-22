@@ -1,5 +1,5 @@
 <PisiManProject type="None" compression="xz">
-    <Title>MisiLinuxAlpha</Title>
+    <Title>LimeAlpha</Title>
     <WorkDir>/tmp/openrc</WorkDir>
     <ConfigFiles>/run/media/erturk/yedekext4/CPISIert/cpisipisiman/config</ConfigFiles>
     <PackageSelection repo_uri="file:///var/db/buildfarm/packages/0.5/x86_64/pisi-index.xml.xz">
