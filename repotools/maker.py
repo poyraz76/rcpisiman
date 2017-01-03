@@ -241,7 +241,7 @@ def setup_live_lxdm(project):
         lines = []
         for line in open(lxdm_path, "r").readlines():
             if line.startswith("# autologin=dgod"):
-                lines.append("autologin=pisilive\n")
+                lines.append("autologin=live\n")
             elif line.startswith("# session=/usr/bin/startlxde"):
                 lines.append("session=/usr/bin/startxfce4\n")    
             else:
@@ -269,20 +269,7 @@ def setup_live_mdm(project):
     else:
         print "*** %s doesn't exist, setup_live_mdm() returned" % mdm_path
 
-def setup_live_lightdm(project):
-    desktop_image_dir = project.desktop_image_dir()
 
-    lightdm_path = os.path.join(desktop_image_dir, "etc/lightdm/lightdm.conf")
-    if os.path.exists(lightdm_path):
-        lines = []
-        for line in open(lightdm_path, "r").readlines():
-            if line.startswith("#autologin-user="):
-                lines.append("autologin-user=pisilive\n")
-            else:
-                lines.append(line)
-        open(lightdm_path, "w").write("".join(lines))
-    else:
-        print "*** %s doesn't exist, setup_live_lightdm() returned" % lightdm_path
 
 def squash_image(project):
     image_dir = project.image_dir()
@@ -387,8 +374,12 @@ def add_repo(project):
     address = open(os.path.join(configdir, "repo.conf")).read()
 
     run("chroot \"%s\" /usr/bin/pisi ar pisi --yes-all  --ignore-check  \"%s\"" % (image_dir,address))
+    #run("chroot \"%s\" /usr/bin/pisi ar contrib --yes-all  --ignore-check  https://github.com/pisilinux/contrib/raw/master/pisi-index.xml.xz" % image_dir)
+    #run("chroot \"%s\" /usr/bin/pisi ar pisilife2 --yes-all  --ignore-check  https://github.com/pisilinux/pisilife-2/raw/master/pisi-index.xml.xz" % image_dir)
     
     
+    
+    run("chroot \"%s\" /bin/service dbus stop" % image_dir)
     
     run('umount %s/proc' % image_dir)
     run('umount %s/sys' % image_dir)
@@ -415,6 +406,7 @@ def make_image(project):
         initrd_image_dir = project.initrd_image_dir()
         livecd_image_dir = project.livecd_image_dir()
         efi_tmp = project.efi_tmp_path_dir()
+        
 
        
         #umount all mount dirs
@@ -447,16 +439,10 @@ def make_image(project):
         
 
         root_image_packages = " ".join(project.all_root_image_packages)
-        
-        run('pisi --yes-all --ignore-comar --ignore-dep --ignore-check --ignore-package-conflicts --ignore-file-conflicts -D"%s" it baselayout' % image_dir)
 
         run('pisi --yes-all --ignore-comar --ignore-dep --ignore-check --ignore-package-conflicts --ignore-file-conflicts -D"%s" it %s' % (image_dir, root_image_packages))
         
         
-        #    if project.plugin_package:
-         #       plugin_package = project.plugin_package
-          #      run('pisi --yes-all --ignore-comar --ignore-check -D"%s" it %s' % (image_dir, plugin_package))
-
 
         def chrun(cmd):
             run('chroot "%s" %s' % (image_dir, cmd))
@@ -476,12 +462,13 @@ def make_image(project):
         run('/bin/mount --bind /sys %s/sys' % image_dir)
 
         chrun("/sbin/ldconfig")
-       # chrun("/sbin/update-environment")
+        chrun("/sbin/update-environment")
            
         chroot_comar(image_dir)
         chrun("/usr/bin/pisi configure-pending baselayout")
 
         chrun("/usr/bin/pisi configure-pending")
+
 
 
         connectToDBus(image_dir)
@@ -494,39 +481,46 @@ def make_image(project):
             
         dbus_interface="tr.org.pardus.comar.User.Manager")
        
-        
-        chrun("/sbin/rc-update add udev default")
-        chrun("/sbin/rc-update add consolekit default")
-        chrun("/sbin/rc-update add dbus default")
 
         # Make sure environment is updated regardless of the booting system, by setting comparison
         # files' atime and mtime to UNIX time 1
 
-     #   os.utime(os.path.join(image_dir, "etc/profile.env"), (1, 1))
+        os.utime(os.path.join(image_dir, "etc/profile.env"), (1, 1))
 
         #chrun('killall comar')
         run('umount %s/proc' % image_dir)
         run('umount %s/sys' % image_dir)
         
-        run('/bin/umount -R %s' % image_dir, ignore_error=True)
-        run("rm -rf %s/run/dbus/*" % image_dir, ignore_error=True)
-       
+        chrun("rm -rf /run/dbus/*")
+        
+        #setup liveuser
+               
+        chrun("rm -rf /etc/sudoers")
+
+        path1 = os.path.join(image_dir, "etc/sudoers.orig")
+        path2 = os.path.join(image_dir, "etc/sudoers")
+        
+        run('cp "%s" "%s"' % (path1, path2))
+        
+        run("/bin/echo 'pisilive ALL=(ALL) NOPASSWD: ALL' >> %s/etc/sudoers" % image_dir)
+        
+        run("/bin/chmod 440 %s/etc/sudoers" % image_dir)
+        
         install_desktop(project)
         install_livecd_util(project)
         make_initrd(project)
-     #   add_repo(project)
+        add_repo(project)
         
     except KeyboardInterrupt:
         print "Keyboard Interrupt: make_image() cancelled."
         sys.exit(1)        
         
 def install_desktop(project):
-    global bus
-    
     print "Preparing desktop image..."
     xterm_title("Preparing desktop image")
     
     image_dir = project.image_dir()
+    configdir =os.path.join(project.config_files)
     
    
     desktop_image_dir = project.desktop_image_dir(clean=True)
@@ -540,32 +534,34 @@ def install_desktop(project):
     run('/bin/mount --bind /proc %s/proc' % desktop_image_dir)
     run('/bin/mount --bind /sys %s/sys' % desktop_image_dir)
     
-    chroot_comar(desktop_image_dir)
-    
-   # run("chroot \"%s\" /bin/service dbus start" % desktop_image_dir)
+    run("chroot \"%s\" /bin/service dbus start" % desktop_image_dir)
 
     run("chroot \"%s\" /usr/bin/pisi cp" % desktop_image_dir)
+       
+       
+       #KDE KURULAN AYAR
+    
+    run("cp -rf %s/default-settings/etc/* %s/etc/" % (configdir,desktop_image_dir))
+    run("cp -rf %s/default-settings/autostart %s/etc/skel/.config/" % (configdir,desktop_image_dir))
     
 
-    run("chroot \"%s\" /sbin/rc-update add xdm default" % desktop_image_dir)
-    run("chroot \"%s\" /sbin/rc-update add networkmanager default" % desktop_image_dir)
 
-   # run("chroot \"%s\" /bin/service dbus stop" % desktop_image_dir)
+    run("chroot \"%s\" /bin/service dbus stop" % desktop_image_dir)
     
     run('umount %s/proc' % desktop_image_dir)
     run('umount %s/sys' % desktop_image_dir)
 
 
-    run('/bin/umount -R %s' % desktop_image_dir, ignore_error=True)
-    run('/bin/umount -l %s' % desktop_image_dir, ignore_error=True)
-    run("rm -rf %s/run/dbus/*" % desktop_image_dir, ignore_error=True)
+    run('/bin/umount -R %s' % desktop_image_dir)
+    run("rm -rf %s/run/dbus/*" % desktop_image_dir)
+    run("rm -rf %s/var/cache/pisi/*" % desktop_image_dir)
     
+
    
-    setup_live_lightdm(project)
+    setup_live_sddm(project)
     
     
 def install_livecd_util(project):
-    global bus
     
     livecd_image_dir = project.livecd_image_dir(clean=True)
     desktop_image_dir = project.desktop_image_dir()
@@ -586,43 +582,49 @@ def install_livecd_util(project):
     run('/bin/mount --bind /proc %s/proc' % livecd_image_dir)
     run('/bin/mount --bind /sys %s/sys' % livecd_image_dir)
     
+   
+   
+   #calamares modules
     
     path = os.path.join(livecd_image_dir, "etc/calamares/modules")
     if not os.path.exists(path):
         os.makedirs(path)
     
-    run("cp -p %s/calamares/modules/* %s/etc/calamares/modules/." % (configdir,livecd_image_dir))
-    run("cp -p %s/calamares/* %s/etc/calamares/." % (configdir,livecd_image_dir),ignore_error=True)
-
-    run("cp -p %s/calamares/* %s/etc/calamares/." % (configdir,livecd_image_dir),ignore_error=True)
+    run("cp -p %s/calamares/modules/* %s/etc/calamares/modules/" % (configdir,livecd_image_dir),ignore_error=True)
+    run("cp -p %s/calamares/* %s/etc/calamares/" % (configdir,livecd_image_dir),ignore_error=True)
     
-    run("cp -p %s/live/sudoers/* %s/etc/sudoers.d/." % (configdir,livecd_image_dir),ignore_error=True)
+    run("cp -p %s/live/sudoers/* %s/etc/sudoers.d/" % (configdir,livecd_image_dir),ignore_error=True)
 
+    
+    
+    #PisiLive Config and chmod
     
     path = os.path.join(livecd_image_dir, "home/pisilive/.config")
     if not os.path.exists(path):
         os.makedirs(path)
         
-    run("cp -p %s/live/kde/.config/* %s/home/pisilive/.config/." % (configdir,livecd_image_dir),ignore_error=True)
-    os.system('/bin/chown 1000:100 "%s/home/pisilive/.config"' % livecd_image_dir)
-    os.chmod(path, 0711)
+    #KDE LİVE AYAR
     
-    chroot_comar(livecd_image_dir)
+    run("cp -p %s/live/kde/.config/* %s/home/pisilive/.config/" % (configdir,livecd_image_dir),ignore_error=True)
+    run("cp -rf %s/live/kde/autostart %s/home/pisilive/.config/" % (configdir,livecd_image_dir),ignore_error=True)
+    os.system('/bin/chown 1000:wheel "%s/home/pisilive/.config"' % livecd_image_dir)
+    os.chmod(path, 0777)
     
-  #  run("chroot \"%s\" /bin/service dbus start" % livecd_image_dir)
+    run("chroot \"%s\" /bin/service dbus start" % livecd_image_dir)
     run("chroot \"%s\" /usr/bin/pisi cp" % livecd_image_dir)
     
     
-   # run("chroot \"%s\" /bin/service dbus stop" % livecd_image_dir)
+    run("chroot \"%s\" /bin/service dbus stop" % livecd_image_dir)
 
   
-    run('umount %s/proc' % livecd_image_dir, ignore_error=True)
-    run('umount %s/sys' % livecd_image_dir, ignore_error=True)
+    run('umount %s/proc' % livecd_image_dir)
+    run('umount %s/sys' % livecd_image_dir)
 
 
-    run('/bin/umount -R %s' % livecd_image_dir, ignore_error=True)
-    run('/bin/umount -l %s' % livecd_image_dir, ignore_error=True)
-    run("rm -rf %s/run/dbus/*" % livecd_image_dir, ignore_error=True)
+    run('/bin/umount -R %s' % livecd_image_dir)
+    
+    run("rm -rf %s/run/dbus/*" % livecd_image_dir)
+    run("rm -rf %s/var/cache/pisi/*" % livecd_image_dir)
 
 
 def make_initrd(project):
@@ -651,21 +653,19 @@ def make_initrd(project):
     
 
     run("cp -p %s/mkinitcpio-live.conf %s/etc/mkinitcpio-live.conf" % (configdir,initrd_image_dir))
-  #  run("cp -p %s/os-release %s/etc/os-release" % (configdir,initrd_image_dir))
-   # run("cp -p %s/os-release %s/etc/os-release" % (configdir,image_dir))
-    
+
     run('/bin/mount --bind /proc %s/proc' %initrd_image_dir)
     run('/bin/mount --bind /sys %s/sys' %initrd_image_dir)
     run('/bin/mount -o bind /dev %s/dev' %initrd_image_dir)
 
     kernel_version = open(os.path.join(image_dir, "etc/kernel/kernel")).read()
-    run("chroot \"%s\" /usr/bin/mkinitcpio -k %s -c '/etc/mkinitcpio-live.conf' -g /boot/initramfs" % (initrd_image_dir,kernel_version), ignore_error=True)
+    run("chroot \"%s\" /usr/bin/mkinitcpio -k %s -c '/etc/mkinitcpio-live.conf' -g /boot/initramfs" % (initrd_image_dir,kernel_version))
 
-    run('/bin/umount %s/proc' % initrd_image_dir, ignore_error=True)
-    run('/bin/umount %s/sys' % initrd_image_dir, ignore_error=True)
-    run('/bin/umount %s/dev' % initrd_image_dir, ignore_error=True)
-    run('/bin/umount -R %s' % initrd_image_dir, ignore_error=True)
-    run('/bin/umount -l %s' % initrd_image_dir, ignore_error=True)
+    run('/bin/umount %s/proc' % initrd_image_dir)
+    run('/bin/umount %s/sys' % initrd_image_dir)
+    run('/bin/umount %s/dev' % initrd_image_dir)
+    run('/bin/umount -R %s' % initrd_image_dir)
+
     run("cp -p %s/boot/initramfs %s/boot/." % (initrd_image_dir,image_dir))    
     
 
@@ -696,6 +696,7 @@ def generate_sort_list(iso_dir):
 def make_EFI(project):
     
     work_dir = os.path.join(project.work_dir)
+    img_dir = os.path.join(project.work_dir)
     configdir =os.path.join(project.config_files)
     iso_dir = project.iso_dir()
     efi_tmp = project.efi_tmp_path_dir(clean=True)
@@ -707,49 +708,34 @@ def make_EFI(project):
     if not os.path.exists(efi_path):
         os.makedirs(efi_path) 
         os.makedirs(os.path.join(efi_path, "boot"))
-        os.makedirs(os.path.join(efi_path, "pisi"))
 
-    
-    loader_path = os.path.join(iso_dir, "loader")
-    
-    if not os.path.exists(loader_path):
-        os.makedirs(loader_path) 
-        os.makedirs(os.path.join(loader_path, "entries"))
-    
-    
     
     run("rm -rf %s/pisi.img" % work_dir)
-    
 
-    run("cp -p %s/efi/loaders/loader.conf %s/." % (configdir, loader_path))
-    run("cp -p %s/efi/loaders/entries/* %s/entries/." % (configdir, loader_path))
     
-  #  os.unlink(os.path.join(loader_path, "entries/pisi-efi-x86_64.conf"))
-    
-    run("cp -p %s/efi/preloader/boot/* %s/boot/." % (configdir, efi_path))
      
-    run("cp -p %s/efi/preloader/* %s/." % (configdir, efi_path),ignore_error=True)
+    run("cp -rf %s/efi/preloader/* %s/boot/" % (configdir, efi_path))
+    run("cp -rf %s/autorun/* %s/." % (configdir, iso_dir))
+    
+    run("cp -rf %s/boot/kernel* %s/EFI/boot/kernel.efi" % (image_dir,iso_dir))  
+    run("cp -rf %s/boot/initramfs* %s/EFI/boot/initrd.img" % (image_dir,iso_dir))
     
     
     run("dd if=/dev/zero bs=1M count=40 of=%s/pisi.img"% work_dir)
-    run("mkfs.vfat -n PISI_EFI %s/pisi.img"% work_dir)
+    run("mkfs.vfat -n PisiLinux %s/pisi.img"% work_dir)
     run("mount %s/pisi.img %s"% (work_dir,efi_tmp))
     
-    os.makedirs(os.path.join(efi_tmp, "loader"))
-    os.makedirs(os.path.join(efi_tmp, "EFI"))
+    
+    os.makedirs(os.path.join(efi_tmp, "EFI/boot"))
 
-    run("cp -r %s/* %s/EFI/." % (efi_path, efi_tmp),ignore_error=True)
-    
-    run("cp -r %s/* %s/loader/." % (loader_path, efi_tmp),ignore_error=True)
-    
-   # os.unlink(os.path.join(efi_tmp, "loader/entries/pisi-x86_64.conf"))
-    
-    run("cp -p %s/boot/kernel* %s/EFI/pisi/kernel.efi" % (image_dir,efi_tmp))  
-    run("cp -p %s/boot/initramfs* %s/EFI/pisi/initrd.img" % (image_dir,efi_tmp))  
-
+    run("cp -r %s/EFI/boot/* %s/EFI/boot/" % (iso_dir, efi_tmp),ignore_error=True)
     
     run("umount %s"% efi_tmp,ignore_error=True)
     run("umount -l %s"% efi_tmp,ignore_error=True)
+    
+
+    
+
     
         
         
@@ -776,10 +762,10 @@ def make_iso(project):
 
         
 
-       # make_EFI(project)
+        make_EFI(project)
         run("cp -p %s/isomounts %s/." % (configdir, image_path))
         run("cp -p %s/*sqfs %s/x86_64/." % (work_dir, image_path))
-       # run("cp -p %s/pisi.img %s/EFI/pisi/." % (work_dir, iso_dir))
+        run("cp -p %s/pisi.img %s/EFI/." % (work_dir, iso_dir))
 
    
         run("touch %s/.miso" % iso_dir)
@@ -805,9 +791,8 @@ def make_iso(project):
             -relaxed-filenames -allow-lowercase -volid "%s" -publisher "%s" -appid "%s" \
             -preparer "prepared by pisiman" -eltorito-boot isolinux/isolinux.bin \
             -eltorito-catalog isolinux/boot.cat -no-emul-boot -boot-load-size 4 -boot-info-table \
-            -isohybrid-mbr "%s/isolinux/isohdpfx.bin"  \
+            -isohybrid-mbr "%s/isolinux/isohdpfx.bin" -eltorito-alt-boot -e /EFI/pisi.img -isohybrid-gpt-basdat -no-emul-boot \
             -output "%s" "%s/iso/"'% (label, publisher ,application, iso_dir, iso_file, work_dir)
-       #-eltorito-alt-boot -e EFI/pisi/pisi.img -isohybrid-gpt-basdat -no-emul-boot
        
        
         run(cmd)
@@ -816,4 +801,3 @@ def make_iso(project):
     except KeyboardInterrupt:
         print "Keyboard Interrupt: make_iso() cancelled."
         sys.exit(1)
-
